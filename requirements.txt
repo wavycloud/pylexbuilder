@@ -1,0 +1,4 @@
+boto3==1.4.6
+pyboto3==1.4.4
+jsonobject==0.7.1
+pytest==3.4.0
