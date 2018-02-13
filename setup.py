@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
-setup(name='pylexo',
-      version='0.3.0',
+setup(name='pylexbuilder',
+      version='0.1.0',
       packages=find_packages(),
-      description='Pythonic Lex Object (PyLexO)',
+      description='Python AWS Lex Builder',
       author='WavyCloud',
       author_email='',
       entry_points={
@@ -11,8 +11,8 @@ setup(name='pylexo',
               'pylexo = pylexo.__main__:main'
           ]
       },
-      url='https://github.com/wavycloud/pylexo',
-      py_modules=['pylexo'],
+      url='https://github.com/wavycloud/pylexbuilder',
+      py_modules=['pylexbuilder'],
       install_requires=['jsonobject==0.7.1'],
       license='MIT License',
       zip_safe=True,
