@@ -1,17 +1,39 @@
+import inspect
 import logging
+import os
+import subprocess
 import time
 from pprint import pformat
 
 import boto3
-import botocore
 from botocore.exceptions import ClientError
-from jsonobject import StringProperty, ObjectProperty, IntegerProperty, BooleanProperty, ListProperty
+from jsonobject import StringProperty, ObjectProperty, IntegerProperty, BooleanProperty, ListProperty, JsonObject
+from troposphere import AWS_REGION, AWS_ACCOUNT_ID, Ref
+
 
 from . import utils
-from .utils import BaseJsonObject
 
 lex_model = boto3.client('lex-models')
 """ :type : pyboto3.lexmodelbuildingservice """
+
+
+class BaseJsonObject(JsonObject):
+
+    def __init__(self, *args, **kwargs):
+        super(BaseJsonObject, self).__init__(*args, **kwargs)
+        self.initialize()
+
+    def to_json(self):
+        for key in self.keys():
+            val = self[key]
+            if isinstance(val, BaseJsonObject):
+                val.to_json()
+            self[key] = val
+
+        return super(BaseJsonObject, self).to_json()
+
+    def initialize(self):
+        pass
 
 
 class CodeHookProperty(BaseJsonObject):
@@ -26,6 +48,7 @@ def assertFulfilmentType(val):
 class FulfilmentActivityProperty(BaseJsonObject):
     type = StringProperty(validators=[assertFulfilmentType], exclude_if_none=True)
     codeHook = ObjectProperty(CodeHookProperty, exclude_if_none=True)
+    """ :type : CodeHookProperty """
 
 
 def assertContentType(val):
@@ -75,7 +98,7 @@ class PropertyWithMessagesMaxAttempts(PropertyWithMessages):
         return super(PropertyWithMessagesMaxAttempts, self).add_message(content, content_type)
 
 
-class valueElicitationPromptProperty(PropertyWithMessagesMaxAttempts):
+class ValueElicitationPromptProperty(PropertyWithMessagesMaxAttempts):
     pass
 
 
@@ -90,6 +113,7 @@ class SlotProperty(BaseJsonObject):
     checksum = StringProperty(exclude_if_none=True)
     """ :type : list[EnumerationProperty] """
     version = StringProperty(exclude_if_none=True)
+
     def get_slot_type_checksum(self):
         checksum = None
         try:
@@ -153,7 +177,8 @@ class IntentSlotProperty(BaseJsonObject):
     slotConstraint = StringProperty(exclude_if_none=True)
     slotType = StringProperty(exclude_if_none=True)
     slotTypeVersion = StringProperty(exclude_if_none=True)
-    valueElicitationPrompt = ObjectProperty(valueElicitationPromptProperty, exclude_if_none=True)
+    valueElicitationPrompt = ObjectProperty(ValueElicitationPromptProperty, exclude_if_none=True)
+    """:type: ValueElicitationPromptProperty"""
     priority = IntegerProperty(exclude_if_none=True)
     sampleUtterances = ListProperty(StringProperty, exclude_if_none=True)
     """ :type : list[str] """
@@ -174,6 +199,9 @@ class IntentSlotProperty(BaseJsonObject):
     def add_utterance(self, utterance):
         self.sampleUtterances = self.sampleUtterances + [utterance]
         return self
+
+    def add_prompt(self, prompt):
+        self.valueElicitationPrompt.add_message(prompt)
 
 
 class PromptProperty(PropertyWithMessagesMaxAttempts):
@@ -281,16 +309,20 @@ class BotProperty(BaseJsonObject):
     idleSessionTTLInSeconds = IntegerProperty(exclude_if_none=True)
     voiceId = StringProperty('Joanna')
     checksum = StringProperty(exclude_if_none=True)
+    version = StringProperty(exclude_if_none=True)
     processBehavior = StringProperty("BUILD")
     locale = StringProperty('en-US')
     childDirected = BooleanProperty()
 
     class IntentMeta:
         intents = []
+        """ :type: list[IntentProperty] """
         existing_intents = []
 
-    def create_all_intents(self):
+    def create_all_intents(self, lambda_arn):
         for intent in self.IntentMeta.intents:
+            if intent.is_lambda():
+                intent.update_uri(lambda_arn)
             intent.create()
 
     def add_all_intents(self):
@@ -355,8 +387,9 @@ class BotProperty(BaseJsonObject):
         response = lex_model.put_bot_alias(name=alias, botVersion=version, botName=self.name, **kwargs)
         logging.info("put_bot_alias: {}".format(pformat(response)))
 
-    def create(self, async=False, publish=False):
-        self.create_all_intents()
+    def create(self, async=False):
+        lambda_arn = self.deploy_cloudformation()
+        self.create_all_intents(lambda_arn)
         self.add_all_intents()
         logging.info("Creating bot: {}".format(self.name))
         # Get the old bot checksum if available
@@ -382,3 +415,85 @@ class BotProperty(BaseJsonObject):
             self.wait_for_bot_build(self.name, self.version)
             self.create_alias('$LATEST', 'dev')
             self.create_alias(self.version, 'prod')
+
+    @property
+    def environment_variables(self):
+        return {}
+
+    @property
+    def runtime(self):
+        return 'python2.7'
+
+    @property
+    def stack_name(self):
+        return '{}Stack'.format(self.name)
+
+    @property
+    def s3_bucket_name(self):
+        return '{}Bucket'.format(self.name)
+
+    @property
+    def lambda_alias(self):
+        return 'production'
+
+    @property
+    def package_path(self):
+        filepath = inspect.getfile(self.__class__)
+        return os.path.dirname(filepath)
+
+    def deploy_cloudformation(self):
+        file_name = utils.upload_lambda(self.s3_bucket_name, self.package_path)
+        t = self.get_cloudformation_template(file_name)
+        template_path = 'template.json'
+        with open(template_path, 'w') as f:
+            f.write(t.to_json())
+        try:
+            utils.call(
+                'aws cloudformation deploy --template-file {} --stack-name {} --capabilities CAPABILITY_IAM'.format(
+                    template_path, self.stack_name))
+        except subprocess.CalledProcessError as e:
+            if e.returncode == 255:
+                logging.exception(e.message)
+            else:
+                raise
+
+        lambda_func_id = utils.cloudformation.describe_stack_resource(StackName=self.stack_name,
+                                                                      LogicalResourceId=self.name)[
+            'StackResourceDetail']['PhysicalResourceId']
+        region = boto3.session.Session().region_name
+        account = utils.get_account_number()
+        lambda_arn = 'arn:aws:lambda:{region}:{account_id}:function:{resource_id}:{alias}'.format(region=region,
+                                                                                                  account_id=account,
+                                                                                                  resource_id=lambda_func_id,
+                                                                                                  alias=self.lambda_alias)
+        return lambda_arn
+
+    def get_cloudformation_template(self, lambda_filename):
+        from troposphere import Template, GetAtt, Join
+        from troposphere.awslambda import Environment
+        from troposphere.awslambda import Permission
+        from troposphere.serverless import Function
+        t = Template()
+        t.add_description("WavyCloud Chatbot submission for devpost challenge")
+        t.add_transform('AWS::Serverless-2016-10-31')
+        lambda_func = t.add_resource(
+            Function(
+                self.name,
+                Handler='handler.index',
+                Runtime=self.runtime,
+                CodeUri='s3://{}/{}'.format(self.s3_bucket_name, lambda_filename),
+                Policies=['AmazonDynamoDBFullAccess', 'AmazonLexFullAccess'],
+                AutoPublishAlias=self.lambda_alias,
+                Environment=Environment(
+                    Variables=self.environment_variables
+                )
+            ),
+        )
+        t.add_resource(Permission(
+            "{}PermissionToLex".format(self.name),
+            FunctionName=Join(":", [GetAtt(lambda_func, "Arn"), self.lambda_alias]),
+            Action="lambda:InvokeFunction",
+            Principal="lex.amazonaws.com",
+            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:*:*'])
+        ))
+        return t

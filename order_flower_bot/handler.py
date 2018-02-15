@@ -10,5 +10,10 @@ if root:
     sys.path.insert(0, packages)
 
 
+import pylexo
+
 def index(event, context):
-    pass
+    event = pylexo.LexInputEvent(event)
+    response = pylexo.DelegateIntentOutputResponse()
+    response.update_from_input(event)
+    return response.to_dict()

@@ -19,7 +19,8 @@ def test_bot():
 
 
 def test_intent():
-    OrderFlowersIntent()
+    intent = OrderFlowersIntent()
+    pprint(intent.to_json())
 
 def test_slot():
     slot = SlotProperty()

@@ -1,9 +1,6 @@
 from pylexbuilder import IntentProperty, BotProperty, SlotProperty, IntentSlotProperty
 
 
-
-
-
 class FlowerTypeIntentSlot(IntentSlotProperty):
     class SlotProperty(SlotProperty):
         name = 'FlowerTypes'
@@ -24,6 +21,9 @@ class FlowerTypeIntentSlot(IntentSlotProperty):
         "Can I order {FlowerType}",
     ]
 
+    def initialize(self):
+        super(FlowerTypeIntentSlot, self).initialize()
+        self.add_prompt("What flower type would you like?")
 
 class OrderFlowersIntent(IntentProperty):
     name = "OrderFlowers"
@@ -33,8 +33,15 @@ class OrderFlowersIntent(IntentProperty):
         "I would like to order some {{{0}}}".format(FlowerTypeIntentSlot().name),
     ]
 
+    def update_uri(self, lambda_arn):
+        self.fulfillmentActivity.codeHook.uri = lambda_arn
+
+    def is_lambda(self):
+        return self.fulfillmentActivity.type == 'CodeHook'
+
     def initialize(self):
-        self.fulfillmentActivity.type = 'ReturnIntent'
+        self.fulfillmentActivity.type = 'CodeHook'
+        self.fulfillmentActivity.codeHook.messageVersion = '1.0'
         self.add_slot(FlowerTypeIntentSlot())
 
 
@@ -50,3 +57,4 @@ class OrderFlowersBot(BotProperty):
     def initialize(self):
         self.abortStatement.add_message("Sorry I couldn't understand, could you please try in a different way")
         self.clarificationPrompt.add_message("Hello There, this Joanna from Flowers Shop. How can I help you?")
+
