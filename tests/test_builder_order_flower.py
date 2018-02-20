@@ -7,24 +7,26 @@ from pylexbuilder import SlotProperty, props
 logging.basicConfig(level=logging.INFO)
 
 def test_props():
-    botIntent = props.BotIntentProperty(intentName="Hello")
-    print(botIntent.to_json())
+    botIntent = props.BotIntentProperty()
+    botIntent.intentName = 'OrderFlowers'
+    print(botIntent.to_primitive())
 
 def test_bot():
     flower_bot = bot.OrderFlowersBot()
     assert flower_bot.name == "OrderFlowers"
     assert 'clarificationPrompt' in flower_bot.keys()
-    pprint(flower_bot.to_json())
+    pprint(flower_bot.to_primitive())
     flower_bot.create()
 
 
 def test_intent():
     intent = OrderFlowersIntent()
-    pprint(intent.to_json())
+    intent.fulfillmentActivity.codeHook.uri = 'arn'
+    pprint(intent.to_primitive())
 
 def test_slot():
     slot = SlotProperty()
     slot.name = "YesNo"
     slot.add_enumeration("Yes")
     slot.create()
-    pprint(slot.to_json())
+    pprint(slot.to_primitive())

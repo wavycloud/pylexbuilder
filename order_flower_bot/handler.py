@@ -11,9 +11,14 @@ if root:
 
 
 import pylexo
-
+""" :type : pylexo"""
 def index(event, context):
     event = pylexo.LexInputEvent(event)
-    response = pylexo.DelegateIntentOutputResponse()
-    response.update_from_input(event)
+
+    if event.is_all_slots_filled():
+        response = pylexo.CloseLexOutputResponse()
+        response.dialogAction.message.content = "We got your order!"
+    else:
+        response = pylexo.DelegateIntentOutputResponse()
+        response.update_from_input(event)
     return response.to_dict()

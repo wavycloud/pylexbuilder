@@ -7,9 +7,8 @@ from pprint import pformat
 
 import boto3
 from botocore.exceptions import ClientError
-from jsonobject import StringProperty, ObjectProperty, IntegerProperty, BooleanProperty, ListProperty, JsonObject
+from schematics import types, models
 from troposphere import AWS_REGION, AWS_ACCOUNT_ID, Ref
-
 
 from . import utils
 
@@ -17,37 +16,27 @@ lex_model = boto3.client('lex-models')
 """ :type : pyboto3.lexmodelbuildingservice """
 
 
-class BaseJsonObject(JsonObject):
-
+class BaseModel(models.Model):
     def __init__(self, *args, **kwargs):
-        super(BaseJsonObject, self).__init__(*args, **kwargs)
+        super(BaseModel, self).__init__(*args, **kwargs)
         self.initialize()
-
-    def to_json(self):
-        for key in self.keys():
-            val = self[key]
-            if isinstance(val, BaseJsonObject):
-                val.to_json()
-            self[key] = val
-
-        return super(BaseJsonObject, self).to_json()
 
     def initialize(self):
         pass
+    
 
-
-class CodeHookProperty(BaseJsonObject):
-    uri = StringProperty(exclude_if_none=True)
-    messageVersion = StringProperty(exclude_if_none=True)
+class CodeHookProperty(BaseModel):
+    uri = types.StringType(serialize_when_none=False)
+    messageVersion = types.StringType(serialize_when_none=False)
 
 
 def assertFulfilmentType(val):
     assert val == 'ReturnIntent' or val == 'CodeHook'
 
 
-class FulfilmentActivityProperty(BaseJsonObject):
-    type = StringProperty(validators=[assertFulfilmentType], exclude_if_none=True)
-    codeHook = ObjectProperty(CodeHookProperty, exclude_if_none=True)
+class FulfilmentActivityProperty(BaseModel):
+    type = types.StringType(validators=[assertFulfilmentType], serialize_when_none=False)
+    codeHook = types.ModelType(CodeHookProperty, serialize_when_none=False, default=CodeHookProperty())
     """ :type : CodeHookProperty """
 
 
@@ -55,26 +44,26 @@ def assertContentType(val):
     assert val == 'PlainText' or 'SSML'
 
 
-class MessageProperty(BaseJsonObject):
+class MessageProperty(BaseModel):
     """
         {
             'contentType': 'PlainText'|'SSML',
             'content': 'string'
         }
     """
-    content = StringProperty("")
-    contentType = StringProperty("PlainText", validators=[assertContentType])
+    content = types.StringType(default="")
+    contentType = types.StringType(default="PlainText", validators=[assertContentType])
 
 
-class PropertyWithMessages(BaseJsonObject):
-    messages = ListProperty(MessageProperty, exclude_if_none=True)
+class PropertyWithMessages(BaseModel):
+    messages = types.ListType(types.ModelType(MessageProperty), default=[])
     """ :type : list[MessageProperty] """
 
     def add_message(self, content, content_type='PlainText'):
         message = MessageProperty()
         message.content = content
         message.contentType = content_type
-        self.messages = self.messages + [message]
+        self.messages.append(message)
         return self
 
 
@@ -91,7 +80,7 @@ class PropertyWithMessagesMaxAttempts(PropertyWithMessages):
             'responseCard': 'string'
         }
     """
-    maxAttempts = IntegerProperty(exclude_if_none=True)
+    maxAttempts = types.IntType(serialize_when_none=False)
 
     def add_message(self, content, content_type='PlainText', maxAttempts=3):
         self.maxAttempts = maxAttempts
@@ -102,17 +91,17 @@ class ValueElicitationPromptProperty(PropertyWithMessagesMaxAttempts):
     pass
 
 
-class EnumerationProperty(BaseJsonObject):
-    value = StringProperty(exclude_if_none=True)
+class EnumerationProperty(BaseModel):
+    value = types.StringType(serialize_when_none=False)
 
 
-class SlotProperty(BaseJsonObject):
-    name = StringProperty()
-    description = StringProperty(exclude_if_none=True)
-    enumerationValues = ListProperty(EnumerationProperty)
-    checksum = StringProperty(exclude_if_none=True)
+class SlotProperty(BaseModel):
+    name = types.StringType()
+    description = types.StringType(serialize_when_none=False)
+    enumerationValues = types.ListType(types.ModelType(EnumerationProperty), serialize_when_none=False)
+    checksum = types.StringType(serialize_when_none=False)
     """ :type : list[EnumerationProperty] """
-    version = StringProperty(exclude_if_none=True)
+    version = types.StringType(serialize_when_none=False)
 
     def get_slot_type_checksum(self):
         checksum = None
@@ -128,7 +117,7 @@ class SlotProperty(BaseJsonObject):
     def create(self):
         logging.info("Creating slot: {}".format(self.name))
         self.checksum = self.get_slot_type_checksum()
-        kwargs = self.to_json()
+        kwargs = self.to_primitive()
         # Put the slot
         response = lex_model.put_slot_type(**kwargs)
         logging.debug("put_slot_type: {}".format(pformat(response)))
@@ -144,10 +133,13 @@ class SlotProperty(BaseJsonObject):
     def add_enumeration(self, value):
         enum = EnumerationProperty()
         enum.value = value
-        self.enumerationValues = self.enumerationValues + [enum]
+        if not self.enumerationValues:
+            self.enumerationValues = [enum]
+        else:
+            self.enumerationValues = self.enumerationValues + [enum]
 
 
-class IntentSlotProperty(BaseJsonObject):
+class IntentSlotProperty(BaseModel):
     """
         {
             'name': 'string',
@@ -172,17 +164,17 @@ class IntentSlotProperty(BaseJsonObject):
             'responseCard': 'string'
         }
     """
-    name = StringProperty(exclude_if_none=True)
-    description = StringProperty(exclude_if_none=True)
-    slotConstraint = StringProperty(exclude_if_none=True)
-    slotType = StringProperty(exclude_if_none=True)
-    slotTypeVersion = StringProperty(exclude_if_none=True)
-    valueElicitationPrompt = ObjectProperty(ValueElicitationPromptProperty, exclude_if_none=True)
+    name = types.StringType(serialize_when_none=False)
+    description = types.StringType(serialize_when_none=False)
+    slotConstraint = types.StringType(serialize_when_none=False)
+    slotType = types.StringType(serialize_when_none=False)
+    slotTypeVersion = types.StringType(serialize_when_none=False)
+    valueElicitationPrompt = types.ModelType(ValueElicitationPromptProperty, default=ValueElicitationPromptProperty())
     """:type: ValueElicitationPromptProperty"""
-    priority = IntegerProperty(exclude_if_none=True)
-    sampleUtterances = ListProperty(StringProperty, exclude_if_none=True)
+    priority = types.IntType(serialize_when_none=False)
+    sampleUtterances = types.ListType(types.StringType, serialize_when_none=False)
     """ :type : list[str] """
-    responseCard = StringProperty(exclude_if_none=True)
+    responseCard = types.StringType(serialize_when_none=False)
 
     class SlotProperty(SlotProperty):
         pass
@@ -205,51 +197,51 @@ class IntentSlotProperty(BaseJsonObject):
 
 
 class PromptProperty(PropertyWithMessagesMaxAttempts):
-    responseCard = StringProperty(exclude_if_none=True)
+    responseCard = types.StringType(serialize_when_none=False)
 
 
 class StatmentProperty(PropertyWithMessages):
-    responseCard = StringProperty(exclude_if_none=True)
+    responseCard = types.StringType(serialize_when_none=False)
 
 
-class FollowUpPromptProperty(BaseJsonObject):
-    prompt = ObjectProperty(PromptProperty, exclude_if_none=True)
+class FollowUpPromptProperty(BaseModel):
+    prompt = types.ModelType(PromptProperty, serialize_when_none=False)
     """ :type : PromptProperty """
-    rejectionStatement = ObjectProperty(StatmentProperty, exclude_if_none=True)
+    rejectionStatement = types.ModelType(StatmentProperty, serialize_when_none=False)
     """ :type : RejectionStatmentProperty """
 
 
-class IntentProperty(BaseJsonObject):
-    name = StringProperty()
-    description = StringProperty(exclude_if_none=True)
-    slots = ListProperty(IntentSlotProperty, exclude_if_none=True)
+class IntentProperty(BaseModel):
+    name = types.StringType()
+    description = types.StringType(serialize_when_none=False)
+    slots = types.ListType(types.ModelType(IntentSlotProperty), serialize_when_none=False, default=[])
     """ :type : list[IntentSlotProperty] """
 
-    sampleUtterances = ListProperty(StringProperty, exclude_if_none=True)
+    sampleUtterances = types.ListType(types.StringType, serialize_when_none=False)
     """ :type : list[str] """
 
-    confirmationPrompt = ObjectProperty(PromptProperty, exclude_if_none=True)
+    confirmationPrompt = types.ModelType(PromptProperty, serialize_when_none=False)
     """ :type : PromptProperty """
 
-    rejectionStatement = ObjectProperty(StatmentProperty, exclude_if_none=True)
+    rejectionStatement = types.ModelType(StatmentProperty, serialize_when_none=False)
     """ :type : StatmentProperty """
 
-    followUpPrompt = ObjectProperty(FollowUpPromptProperty, exclude_if_none=True)
+    followUpPrompt = types.ModelType(FollowUpPromptProperty, serialize_when_none=False)
     """ :type : FollowUpPromptProperty """
 
-    conclusionStatement = ObjectProperty(StatmentProperty, exclude_if_none=True)
+    conclusionStatement = types.ModelType(StatmentProperty, serialize_when_none=False)
     """ :type : StatmentProperty """
 
-    dialogCodeHook = ObjectProperty(CodeHookProperty, exclude_if_none=True)
+    dialogCodeHook = types.ModelType(CodeHookProperty, serialize_when_none=False)
     """ :type : CodeHookProperty """
 
-    fulfillmentActivity = ObjectProperty(FulfilmentActivityProperty, exclude_if_none=True)
+    fulfillmentActivity = types.ModelType(FulfilmentActivityProperty, serialize_when_none=False, default=FulfilmentActivityProperty())
     """ :type : FulfilmentActivityProperty """
-    parentIntentSignature = StringProperty(exclude_if_none=True)
-    checksum = StringProperty(exclude_if_none=True)
+    parentIntentSignature = types.StringType(serialize_when_none=False)
+    checksum = types.StringType(serialize_when_none=False)
 
     def add_slot(self, slot_prop):
-        self.slots = self.slots + [slot_prop]
+        self.slots.append(slot_prop)
 
     def add_utterance(self, utterance):
         self.sampleUtterances = self.sampleUtterances + [utterance]
@@ -276,7 +268,7 @@ class IntentProperty(BaseJsonObject):
         self.create_slots()
         # Create the intent and get the old checksum if it exists
         self.checksum = self.get_intent_checksum()
-        kwargs = self.to_json()
+        kwargs = self.to_primitive()
         # Put the new/updated intent
         response = lex_model.put_intent(**kwargs)
         logging.info("put_intent: {}".format(pformat(response)))
@@ -292,27 +284,27 @@ class IntentProperty(BaseJsonObject):
         return self
 
 
-class BotIntentProperty(BaseJsonObject):
-    intentName = StringProperty(exclude_if_none=True)
-    intentVersion = StringProperty(exclude_if_none=True)
+class BotIntentProperty(BaseModel):
+    intentName = types.StringType(serialize_when_none=False)
+    intentVersion = types.StringType(serialize_when_none=False)
 
 
-class BotProperty(BaseJsonObject):
-    name = StringProperty()
-    description = StringProperty(exclude_if_none=True)
-    intents = ListProperty(BotIntentProperty, exclude_if_none=True)
+class BotProperty(BaseModel):
+    name = types.StringType()
+    description = types.StringType(serialize_when_none=False)
+    intents = types.ListType(types.ModelType(BotIntentProperty), serialize_when_none=False, default=[])
     """ :type : BotIntentProperty"""
-    clarificationPrompt = ObjectProperty(PromptProperty, exclude_if_none=True)
+    clarificationPrompt = types.ModelType(PromptProperty, serialize_when_none=False, default=PromptProperty())
     """ :type : PromptProperty"""
-    abortStatement = ObjectProperty(StatmentProperty, exclude_if_none=True)
+    abortStatement = types.ModelType(StatmentProperty, serialize_when_none=False, default=StatmentProperty())
     """ :type : StatmentProperty"""
-    idleSessionTTLInSeconds = IntegerProperty(exclude_if_none=True)
-    voiceId = StringProperty('Joanna')
-    checksum = StringProperty(exclude_if_none=True)
-    version = StringProperty(exclude_if_none=True)
-    processBehavior = StringProperty("BUILD")
-    locale = StringProperty('en-US')
-    childDirected = BooleanProperty()
+    idleSessionTTLInSeconds = types.IntType(serialize_when_none=False)
+    voiceId = types.StringType(default='Joanna')
+    checksum = types.StringType(serialize_when_none=False)
+    version = types.StringType(serialize_when_none=False)
+    processBehavior = types.StringType(default="BUILD")
+    locale = types.StringType(default='en-US')
+    childDirected = types.BooleanType()
 
     class IntentMeta:
         intents = []
@@ -334,7 +326,7 @@ class BotProperty(BaseJsonObject):
         intent = BotIntentProperty()
         intent.intentName = name
         intent.intentVersion = version
-        self.intents = self.intents + [intent]
+        self.intents.append(intent)
         return self
 
     @classmethod
@@ -395,7 +387,7 @@ class BotProperty(BaseJsonObject):
         # Get the old bot checksum if available
         self.checksum = self.get_bot_checksum(self.name, '$LATEST')
 
-        kwargs = self.to_json()
+        kwargs = self.to_primitive()
         # Build/Update the bot
         response = lex_model.put_bot(
             **kwargs
@@ -462,10 +454,9 @@ class BotProperty(BaseJsonObject):
             'StackResourceDetail']['PhysicalResourceId']
         region = boto3.session.Session().region_name
         account = utils.get_account_number()
-        lambda_arn = 'arn:aws:lambda:{region}:{account_id}:function:{resource_id}:{alias}'.format(region=region,
+        lambda_arn = 'arn:aws:lambda:{region}:{account_id}:function:{resource_id}'.format(region=region,
                                                                                                   account_id=account,
-                                                                                                  resource_id=lambda_func_id,
-                                                                                                  alias=self.lambda_alias)
+                                                                                                  resource_id=lambda_func_id)
         return lambda_arn
 
     def get_cloudformation_template(self, lambda_filename):
@@ -474,7 +465,7 @@ class BotProperty(BaseJsonObject):
         from troposphere.awslambda import Permission
         from troposphere.serverless import Function
         t = Template()
-        t.add_description("WavyCloud Chatbot submission for devpost challenge")
+        t.add_description("Built with WavyCloud's pylexbuilder")
         t.add_transform('AWS::Serverless-2016-10-31')
         lambda_func = t.add_resource(
             Function(
@@ -491,9 +482,9 @@ class BotProperty(BaseJsonObject):
         )
         t.add_resource(Permission(
             "{}PermissionToLex".format(self.name),
-            FunctionName=Join(":", [GetAtt(lambda_func, "Arn"), self.lambda_alias]),
+            FunctionName=GetAtt(lambda_func, "Arn"),
             Action="lambda:InvokeFunction",
             Principal="lex.amazonaws.com",
-            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:*:*'])
+            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(self.name)])
         ))
         return t
