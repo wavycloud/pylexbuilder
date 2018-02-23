@@ -487,4 +487,11 @@ class BotProperty(BaseModel):
             Principal="lex.amazonaws.com",
             SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(self.name)])
         ))
+        t.add_resource(Permission(
+            "{}PermissionToLex{}".format(self.name, self.lambda_alias),
+            FunctionName=Join(":", [GetAtt(lambda_func, "Arn"), self.lambda_alias]),
+            Action="lambda:InvokeFunction",
+            Principal="lex.amazonaws.com",
+            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(self.name)])
+        ))
         return t
