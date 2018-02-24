@@ -23,7 +23,7 @@ class BaseModel(models.Model):
 
     def initialize(self):
         pass
-    
+
 
 class CodeHookProperty(BaseModel):
     uri = types.StringType(serialize_when_none=False)
@@ -139,7 +139,7 @@ class SlotProperty(BaseModel):
             self.enumerationValues = self.enumerationValues + [enum]
 
 
-class IntentSlotProperty(BaseModel):
+class IntentSlotPropertyBase(BaseModel):
     """
         {
             'name': 'string',
@@ -176,6 +176,28 @@ class IntentSlotProperty(BaseModel):
     """ :type : list[str] """
     responseCard = types.StringType(serialize_when_none=False)
 
+    def add_utterance(self, utterance):
+        self.sampleUtterances.append(utterance)
+        return self
+
+    def add_prompt(self, prompt):
+        self.valueElicitationPrompt.add_message(prompt)
+
+    def create(self):
+        pass
+
+def AmazonSlotProperty(slot_type, name=None, required=False, prompt=None):
+    prop = IntentSlotPropertyBase()
+    prop.slotType = slot_type
+    prop.slotConstraint = 'Required' if required else 'Optional'
+    if name:
+        prop.name = name
+    if prompt:
+        prop.add_prompt(prompt)
+
+    return prop
+
+class IntentSlotProperty(IntentSlotPropertyBase):
     class SlotProperty(SlotProperty):
         pass
 
@@ -187,13 +209,6 @@ class IntentSlotProperty(BaseModel):
         slotToCreate = self.SlotProperty()
         slotToCreate.create()
         self.slotTypeVersion = slotToCreate.version
-
-    def add_utterance(self, utterance):
-        self.sampleUtterances = self.sampleUtterances + [utterance]
-        return self
-
-    def add_prompt(self, prompt):
-        self.valueElicitationPrompt.add_message(prompt)
 
 
 class PromptProperty(PropertyWithMessagesMaxAttempts):
@@ -235,7 +250,8 @@ class IntentProperty(BaseModel):
     dialogCodeHook = types.ModelType(CodeHookProperty, serialize_when_none=False)
     """ :type : CodeHookProperty """
 
-    fulfillmentActivity = types.ModelType(FulfilmentActivityProperty, serialize_when_none=False, default=FulfilmentActivityProperty())
+    fulfillmentActivity = types.ModelType(FulfilmentActivityProperty, serialize_when_none=False,
+                                          default=FulfilmentActivityProperty())
     """ :type : FulfilmentActivityProperty """
     parentIntentSignature = types.StringType(serialize_when_none=False)
     checksum = types.StringType(serialize_when_none=False)
@@ -317,10 +333,14 @@ class BotProperty(BaseModel):
                 intent.update_uri(lambda_arn)
             intent.create()
 
+
     def add_all_intents(self):
-        all_intents = self.IntentMeta.intents + self.IntentMeta.existing_intents
-        for intent in all_intents:
+        for intent in self.get_all_intents():
             self.add_intent(intent.name, intent.version)
+
+    def get_all_intents(self):
+        all_intents = self.IntentMeta.intents + self.IntentMeta.existing_intents
+        return all_intents
 
     def add_intent(self, name, version):
         intent = BotIntentProperty()
@@ -418,7 +438,7 @@ class BotProperty(BaseModel):
 
     @property
     def stack_name(self):
-        return '{}Stack'.format(self.name)
+        return '{}ChatbotStack'.format(self.name)
 
     @property
     def s3_bucket_name(self):
@@ -439,15 +459,14 @@ class BotProperty(BaseModel):
         template_path = 'template.json'
         with open(template_path, 'w') as f:
             f.write(t.to_json())
+
         try:
             utils.call(
-                'aws cloudformation deploy --template-file {} --stack-name {} --capabilities CAPABILITY_IAM'.format(
+                'aws cloudformation deploy --template-file {} --stack-name {} --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset'.format(
                     template_path, self.stack_name))
-        except subprocess.CalledProcessError as e:
-            if e.returncode == 255:
-                logging.exception(e.message)
-            else:
-                raise
+        except Exception as e:
+            pass
+
 
         lambda_func_id = utils.cloudformation.describe_stack_resource(StackName=self.stack_name,
                                                                       LogicalResourceId=self.name)[
@@ -455,8 +474,27 @@ class BotProperty(BaseModel):
         region = boto3.session.Session().region_name
         account = utils.get_account_number()
         lambda_arn = 'arn:aws:lambda:{region}:{account_id}:function:{resource_id}'.format(region=region,
-                                                                                                  account_id=account,
-                                                                                                  resource_id=lambda_func_id)
+                                                                                          account_id=account,
+                                                                                          resource_id=lambda_func_id)
+        boto3session = boto3.session.Session()
+        awslambda = boto3.client('lambda')
+        """ :type : pyboto3.lambda_ """
+
+        for i, intent in enumerate(self.get_all_intents()):
+            try:
+                awslambda.add_permission(FunctionName='{}:{}'.format(lambda_arn, self.lambda_alias),
+                                     StatementId='{}PermissionToLexProduction'.format(intent.name),
+                                     Action='lambda:InvokeFunction',
+                                     SourceArn='arn:aws:lex:{aws_region}:{aws_account_id}:intent:{intent_name}:*'.format(
+                                         aws_region=boto3session.region_name,
+                                         aws_account_id=boto3.client('sts').get_caller_identity().get('Account'),
+                                         intent_name=intent.name
+                                     ),
+                                     Principal="lex.amazonaws.com",
+                                     )
+            except ClientError as e:
+                if e.response['Error']['Code'] != 'ResourceConflictException':
+                    raise
         return lambda_arn
 
     def get_cloudformation_template(self, lambda_filename):
@@ -480,18 +518,12 @@ class BotProperty(BaseModel):
                 )
             ),
         )
-        t.add_resource(Permission(
-            "{}PermissionToLex".format(self.name),
-            FunctionName=GetAtt(lambda_func, "Arn"),
-            Action="lambda:InvokeFunction",
-            Principal="lex.amazonaws.com",
-            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(self.name)])
-        ))
-        t.add_resource(Permission(
-            "{}PermissionToLex{}".format(self.name, self.lambda_alias),
-            FunctionName=Join(":", [GetAtt(lambda_func, "Arn"), self.lambda_alias]),
-            Action="lambda:InvokeFunction",
-            Principal="lex.amazonaws.com",
-            SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(self.name)])
-        ))
+        for i, intent in enumerate(self.get_all_intents()):
+            t.add_resource(Permission(
+                "PermissionToLex{}".format(intent.name),
+                FunctionName=GetAtt(lambda_func, "Arn"),
+                Action="lambda:InvokeFunction",
+                Principal="lex.amazonaws.com",
+                SourceArn=Join("", ['arn:aws:lex:', Ref(AWS_REGION), ':', Ref(AWS_ACCOUNT_ID), ':intent:{}:*'.format(intent.name)])
+            ))
         return t

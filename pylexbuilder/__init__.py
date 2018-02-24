@@ -1,1 +1,1 @@
-from props import IntentProperty, BotProperty, SlotProperty, IntentSlotProperty
+from props import IntentProperty, BotProperty, SlotProperty, IntentSlotProperty, AmazonSlotProperty
