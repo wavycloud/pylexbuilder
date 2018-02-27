@@ -93,15 +93,17 @@ class ValueElicitationPromptProperty(PropertyWithMessagesMaxAttempts):
 
 class EnumerationProperty(BaseModel):
     value = types.StringType(serialize_when_none=False)
+    synonyms = types.ListType(types.StringType, serialize_when_none=False)
 
 
 class SlotProperty(BaseModel):
     name = types.StringType()
     description = types.StringType(serialize_when_none=False)
     enumerationValues = types.ListType(types.ModelType(EnumerationProperty), serialize_when_none=False)
-    checksum = types.StringType(serialize_when_none=False)
     """ :type : list[EnumerationProperty] """
+    checksum = types.StringType(serialize_when_none=False)
     version = types.StringType(serialize_when_none=False)
+    valueSelectionStrategy = types.StringType(serialize_when_none=False)
 
     def get_slot_type_checksum(self):
         checksum = None
